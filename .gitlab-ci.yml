@@ -1,0 +1,32 @@
+variables:
+  AWS_REPO: "royswiftcam/selenium-vnc-chrome:1.0.0"
+  AWS_ECS_TASK_NAME: "selenium-vnc-chrome"
+  AWS_CLI_REPO: "royswiftcam/aws-cli:1.0.0"
+  AWS_ECS_SERVICE_NAME: "selenium-srv"
+
+stages:
+  - push
+  - deploy
+  
+services:
+  - docker:dind
+  
+push_dockerhub:
+  stage: push
+  script:
+    - docker build -t $AWS_REPO .
+    - docker login -u $DOCKER_HUB_USER -p $DOCKER_HUB_PW
+    - docker push $AWS_REPO
+
+
+deploy:update_task_service:
+  stage: deploy
+  image: $AWS_CLI_REPO
+  script: 
+  - task=$(aws ecs describe-task-definition --task-definition $(aws ecs list-task-definitions | jq '.taskDefinitionArns[]' | grep $AWS_ECS_TASK_NAME | tail -n1 | tr -d '"') )
+  - family=$(echo $task | jq '.taskDefinition.family' | tr -d '"') 
+  - volumes=$(echo $task | jq '.taskDefinition.volumes' | jq -r '. | tojson') 
+  - containerDefinitions=$(echo $task | jq --arg AWS_REPO "$AWS_REPO" '.taskDefinition.containerDefinitions[0].image = $AWS_REPO' | jq '.taskDefinition.containerDefinitions' | jq -r '. | tojson')
+  - aws ecs register-task-definition --family $family --volumes $volumes --container-definitions $containerDefinitions
+  - aws ecs update-service --service $AWS_ECS_SERVICE_NAME --task-definition $(aws ecs list-task-definitions | jq '.taskDefinitionArns[]' | grep $AWS_ECS_TASK_NAME | tail -n1 | tr -d '"')
+  
